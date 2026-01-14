@@ -51,6 +51,63 @@ def get_wifi_networks():
         print(f"Ошибка при сканировании: {e}")
         return []
 
+def ensure_hotspot_mode():
+    """Проверяет наличие подключения и создает Hotspot, если сети нет."""
+    print("Проверка состояния Wi-Fi...")
+    
+    if IS_LOCAL_DEV:
+        print("[MOCK] Проверка активных подключений...")
+        print("[MOCK] Нет активного Wi-Fi подключения. Создание Hotspot 'RPI-Setup'...")
+        print("[MOCK] Hotspot активирован. IP адрес: 10.42.0.1")
+        return
+
+    try:
+        # Проверяем, есть ли активное Wi-Fi подключение
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "TYPE,STATE", "connection", "show", "--active"],
+            capture_output=True,
+            text=True
+        )
+        
+        # Ищем 802-11-wireless или wifi в выводе
+        if "802-11-wireless:activated" in result.stdout or "wifi:activated" in result.stdout:
+            print("Обнаружено активное Wi-Fi подключение. Hotspot не нужен.")
+            return
+
+        print("Активное Wi-Fi подключение не найдено. Создание точки доступа (Hotspot)...")
+
+        # Удаляем старый профиль Hotspot, если он есть, чтобы не было конфликтов
+        subprocess.run(["nmcli", "con", "delete", "Hotspot"], capture_output=True)
+
+        # Создаем новое подключение Hotspot
+        # 802-11-wireless.mode ap = Access Point
+        # ipv4.method shared = Раздача интернета (создает шлюз 10.42.0.1)
+        # wifi-sec.key-mgmt none = Без пароля (Open)
+        
+        # 1. Создаем базовое подключение
+        subprocess.run([
+            "nmcli", "con", "add", "type", "wifi", "ifname", "wlan0", "con-name", "Hotspot",
+            "autoconnect", "yes", "ssid", "RPI-Setup"
+        ], check=True)
+
+        # 2. Настраиваем режим AP и IP
+        subprocess.run([
+            "nmcli", "con", "modify", "Hotspot",
+            "802-11-wireless.mode", "ap", 
+            "ipv4.method", "shared"
+        ], check=True)
+
+        # 3. Поднимаем интерфейс
+        subprocess.run(["nmcli", "con", "up", "Hotspot"], check=True)
+        
+        print("Hotspot 'RPI-Setup' успешно создан и активирован.")
+        print("Подключитесь к сети 'RPI-Setup' и перейдите по адресу: http://10.42.0.1:5000")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Ошибка при настройке Hotspot: {e}")
+    except Exception as e:
+        print(f"Непредвиденная ошибка: {e}")
+
 def run_nmcli_connect(ssid, password):
     """Фоновая функция для выполнения подключения."""
     time.sleep(2) # Задержка, чтобы Flask успел отправить ответ браузеру
@@ -65,12 +122,22 @@ def run_nmcli_connect(ssid, password):
             ["sudo", "nmcli", "dev", "wifi", "connect", ssid, "password", password],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=60 # Увеличим таймаут на всякий случай
         )
         if result.returncode == 0:
             print(f"Успешное подключение к {ssid}")
+            
+            # Если подключение успешно, удаляем/отключаем Hotspot, чтобы переключиться в режим клиента
+            try:
+                print("Удаление профиля Hotspot для перехода в режим клиента...")
+                subprocess.run(["sudo", "nmcli", "con", "delete", "Hotspot"], capture_output=True)
+            except Exception as e:
+                print(f"Ошибка при удалении Hotspot: {e}")
+                
         else:
             print(f"Ошибка подключения к {ssid}: {result.stderr}")
+            # Можно добавить логику возврата к Hotspot, если подключение не удалось
+            
     except Exception as e:
         print(f"Исключение при попытке подключения: {e}")
 
@@ -190,4 +257,8 @@ if __name__ == '__main__':
     print(f"Запуск Wi-Fi менеджера на http://{host}:{port}")
     if IS_LOCAL_DEV:
         print("ВНИМАНИЕ: nmcli не найден. Работает режим локальной разработки (MOCK).")
+
+    # 4. Проверяем режим при запуске
+    ensure_hotspot_mode()
+
     app.run(host=host, port=port, debug=True)
