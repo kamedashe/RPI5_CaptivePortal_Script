@@ -141,6 +141,82 @@ def run_nmcli_connect(ssid, password):
     except Exception as e:
         print(f"Исключение при попытке подключения: {e}")
 
+def check_internet():
+    """Проверяет доступность интернета (ping 8.8.8.8)."""
+    if IS_LOCAL_DEV:
+        return True # В разработке считаем, что интернет есть
+    
+    try:
+        # ping -c 1 (один пакет), -W 2 (таймаут 2 сек)
+        subprocess.run(
+            ["ping", "-c", "1", "-W", "2", "8.8.8.8"], 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL, 
+            check=True
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+    except Exception as e:
+        print(f"Ошибка проверки ping: {e}")
+        return False
+
+def internet_monitor_loop():
+    """
+    Фоновый процесс: каждые 20-30 секунд проверяет интернет.
+    Если интернета нет и мы не в режиме Hotspot -> поднимает Hotspot.
+    """
+    print("Старт фонового мониторинга интернета...")
+    while True:
+        time.sleep(30) # Интервал проверки
+        
+        if IS_LOCAL_DEV:
+            continue
+
+        try:
+            # 1. Проверяем текущие активные соединения
+            res = subprocess.run(
+                ["nmcli", "-t", "-f", "NAME,TYPE", "con", "show", "--active"], 
+                capture_output=True, 
+                text=True
+            )
+            output = res.stdout
+            
+            # Если Hotspot уже активен, ничего не делаем (ждем подключения/настройки юзера)
+            if "Hotspot" in output:
+                continue
+
+            # 2. Если мы не Hotspot, проверяем интернет
+            if check_internet():
+                # Интернет есть, продолжаем мониторинг
+                continue
+
+            print("🔴 Интернет ОТСУТСТВУЕТ! Инициирую переход в Hotspot режим...")
+            
+            # 3. Принудительно отключаем текущие wifi-клиенты, чтобы ensure_hotspot_mode отработал
+            # (так как ensure_hotspot_mode выходит, если видит активный wifi)
+            lines = output.strip().split('\n')
+            for line in lines:
+                if not line: continue
+                parts = line.split(':') # NAME:TYPE
+                if len(parts) >= 2:
+                    name = parts[0]
+                    conn_type = parts[1]
+                    # Если это wifi или wireless и не Hotspot
+                    if ("wifi" in conn_type or "wireless" in conn_type) and name != "Hotspot":
+                        print(f"Отключаем проблемное соединение: {name}")
+                        subprocess.run(["sudo", "nmcli", "con", "down", name])
+
+            # 4. Поднимаем Hotspot
+            ensure_hotspot_mode()
+
+        except Exception as e:
+            print(f"Ошибка в цикле мониторинга: {e}")
+
+def start_monitor_thread():
+    thread = threading.Thread(target=internet_monitor_loop, daemon=True)
+    thread.start()
+
 # HTML шаблон
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -260,5 +336,8 @@ if __name__ == '__main__':
 
     # 4. Проверяем режим при запуске
     ensure_hotspot_mode()
+
+    # 5. Запускаем фоновый монитор
+    start_monitor_thread()
 
     app.run(host=host, port=port, debug=True)
