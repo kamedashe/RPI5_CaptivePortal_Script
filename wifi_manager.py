@@ -90,10 +90,11 @@ def ensure_hotspot_mode():
             "autoconnect", "yes", "ssid", "RPI-Setup"
         ], check=True)
 
-        # 2. Настраиваем режим AP и IP
+        # 2. Настраиваем режим AP и IP, принудительно 2.4 ГГц
         subprocess.run([
             "nmcli", "con", "modify", "Hotspot",
             "802-11-wireless.mode", "ap", 
+            "802-11-wireless.band", "bg",
             "ipv4.method", "shared"
         ], check=True)
 
