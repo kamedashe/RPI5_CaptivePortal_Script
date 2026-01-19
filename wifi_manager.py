@@ -2,7 +2,8 @@ import subprocess
 import shutil
 import threading
 import time
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+
+from flask import Flask, render_template_string, request, redirect, url_for, flash, Response
 
 app = Flask(__name__)
 app.secret_key = "wifi_manager_secret"
@@ -90,12 +91,15 @@ def ensure_hotspot_mode():
             "autoconnect", "yes", "ssid", "RPI-Setup"
         ], check=True)
 
-        # 2. Настраиваем режим AP и IP, принудительно 2.4 ГГц
+        # 2. Настраиваем режим AP, IP и WPA2
         subprocess.run([
             "nmcli", "con", "modify", "Hotspot",
             "802-11-wireless.mode", "ap", 
             "802-11-wireless.band", "bg",
-            "ipv4.method", "shared"
+            "802-11-wireless.channel", "1",
+            "ipv4.method", "shared",
+            "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.psk", "Alpina2023!"
         ], check=True)
 
         # 3. Поднимаем интерфейс
@@ -183,13 +187,10 @@ def internet_monitor_loop():
             )
             output = res.stdout
             
-            # Если Hotspot уже активен, ничего не делаем (ждем подключения/настройки юзера)
-            if "Hotspot" in output:
-                continue
-
-            # 2. Если мы не Hotspot, проверяем интернет
+            # 2. Проверяем интернет (Paranoia Mode: если есть интернет, убиваем Hotspot)
             if check_internet():
-                # Интернет есть, продолжаем мониторинг
+                print("Интернет есть. Убеждаемся, что Hotspot удален...")
+                subprocess.run(["nmcli", "con", "delete", "Hotspot"], capture_output=True)
                 continue
 
             print("🔴 Интернет ОТСУТСТВУЕТ! Инициирую переход в Hotspot режим...")
@@ -217,6 +218,8 @@ def internet_monitor_loop():
 def start_monitor_thread():
     thread = threading.Thread(target=internet_monitor_loop, daemon=True)
     thread.start()
+
+
 
 # HTML шаблон
 HTML_TEMPLATE = """
