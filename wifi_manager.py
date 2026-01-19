@@ -75,43 +75,77 @@ def ensure_hotspot_mode():
             print("Обнаружено активное Wi-Fi подключение. Hotspot не нужен.")
             return
 
-        print("Активное Wi-Fi подключение не найдено. Создание точки доступа (Hotspot)...")
+        print("Активное Wi-Fi подключение не найдено. Начинаем процедуру создания Hotspot...")
 
-        # Удаляем старый профиль Hotspot, если он есть, чтобы не было конфликтов
-        subprocess.run(["nmcli", "con", "delete", "Hotspot"], capture_output=True)
+        # --- 1. Полный сброс Radio (User Request: Full reset) ---
+        # Выключаем и включаем радио для сброса состояния драйвера
+        print("♻️ Сброс драйвера Wi-Fi (Radio OFF/ON)...")
+        subprocess.run(["sudo", "nmcli", "radio", "wifi", "off"], check=True)
+        time.sleep(2) 
+        subprocess.run(["sudo", "nmcli", "radio", "wifi", "on"], check=True)
+        print("⏳ Ожидание инициализации Wi-Fi адаптера (4 сек)...")
+        time.sleep(4)
 
-        # Создаем новое подключение Hotspot
-        # 802-11-wireless.mode ap = Access Point
-        # ipv4.method shared = Раздача интернета (создает шлюз 10.42.0.1)
-        # wifi-sec.key-mgmt none = Без пароля (Open)
-        
+        # --- 2. Удаление «фантомов» (User Request: Clean wlan0) ---
+        print("🧹 Очистка интерфейса от фантомных подключений...")
+        # После включения радио NM мог автоматом подцепить что-то. Проверяем и удаляем.
+        try:
+            res_active = subprocess.run(
+                ["nmcli", "-t", "-f", "UUID,DEVICE,NAME", "con", "show", "--active"],
+                capture_output=True, text=True
+            )
+            for line in res_active.stdout.strip().split('\n'):
+                if not line: continue
+                parts = line.split(':') # UUID:DEVICE:NAME
+                if len(parts) >= 2:
+                    uuid = parts[0]
+                    device = parts[1]
+                    name = parts[2] if len(parts) > 2 else "Unknown"
+                    
+                    # Если висит что-то на wlan0 и это не наш целевой Hotspot (которого еще нет)
+                    if device == "wlan0" and name != "Hotspot":
+                        print(f"🔪 Принудительное отключение фантома: {name} ({uuid})")
+                        subprocess.run(["sudo", "nmcli", "con", "down", uuid], capture_output=True)
+        except Exception as e:
+            print(f"⚠️ Ошибка при очистке фантомов (некритично): {e}")
+
+        # --- 3. Создание Hotspot ---
+        print("Создание точки доступа (Hotspot)...")
+
+        # Удаляем старый профиль Hotspot, если он есть
+        subprocess.run(["sudo", "nmcli", "con", "delete", "Hotspot"], capture_output=True)
+
         # 1. Создаем базовое подключение
         subprocess.run([
-            "nmcli", "con", "add", "type", "wifi", "ifname", "wlan0", "con-name", "Hotspot",
+            "sudo", "nmcli", "con", "add", "type", "wifi", "ifname", "wlan0", "con-name", "Hotspot",
             "autoconnect", "yes", "ssid", "RPI-Setup"
         ], check=True)
 
-        # 2. Настраиваем режим AP, IP и WPA2
+        # 2. Настраиваем режим AP, IP и строгий WPA2-AES (RSN/CCMP)
+        # Это "золотой стандарт" для Apple устройств
         subprocess.run([
-            "nmcli", "con", "modify", "Hotspot",
+            "sudo", "nmcli", "con", "modify", "Hotspot",
             "802-11-wireless.mode", "ap", 
             "802-11-wireless.band", "bg",
             "802-11-wireless.channel", "1",
             "ipv4.method", "shared",
             "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.proto", "rsn",       # Force WPA2
+            "wifi-sec.pairwise", "ccmp",   # Force AES
+            "wifi-sec.group", "ccmp",      # Force AES
             "wifi-sec.psk", "Alpina2023!"
         ], check=True)
 
         # 3. Поднимаем интерфейс
-        subprocess.run(["nmcli", "con", "up", "Hotspot"], check=True)
+        subprocess.run(["sudo", "nmcli", "con", "up", "Hotspot"], check=True)
         
-        print("Hotspot 'RPI-Setup' успешно создан и активирован.")
+        print("✅ Hotspot 'RPI-Setup' (WPA2-AES) успешно создан и активирован.")
         print("Подключитесь к сети 'RPI-Setup' и перейдите по адресу: http://10.42.0.1:5000")
 
     except subprocess.CalledProcessError as e:
-        print(f"Ошибка при настройке Hotspot: {e}")
+        print(f"❌ Ошибка при настройке Hotspot: {e}")
     except Exception as e:
-        print(f"Непредвиденная ошибка: {e}")
+        print(f"❌ Непредвиденная ошибка: {e}")
 
 def run_nmcli_connect(ssid, password):
     """Фоновая функция для выполнения подключения."""
