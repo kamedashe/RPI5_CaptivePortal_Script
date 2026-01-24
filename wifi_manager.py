@@ -2,6 +2,7 @@ import subprocess
 import shutil
 import threading
 import time
+import uuid
 
 from flask import Flask, render_template_string, request, redirect, url_for, flash, Response
 
@@ -11,6 +12,23 @@ app.secret_key = "wifi_manager_secret"
 # Проверка наличия nmcli в системе
 NMCLI_PATH = shutil.which("nmcli")
 IS_LOCAL_DEV = NMCLI_PATH is None
+
+def get_device_suffix():
+    """
+    Генерирует уникальный суффикс из MAC-адреса устройства.
+    Пример возврата: 'A1B2' (последние 4 символа MAC)
+    """
+    try:
+        # Получаем MAC адрес как число
+        mac_num = uuid.getnode()
+        # Преобразуем в hex строку (например: 0123456789ab)
+        mac_hex = '{:012x}'.format(mac_num)
+        # Берем последние 4 символа и делаем UpperCase
+        suffix = mac_hex[-4:].upper()
+        return suffix
+    except Exception as e:
+        print(f"Error getting MAC: {e}")
+        return "SETUP" # Фоллбек, если не смогли получить MAC
 
 def get_wifi_networks():
     """Получает список доступных Wi-Fi сетей."""
@@ -112,13 +130,20 @@ def ensure_hotspot_mode():
         # --- 3. Создание Hotspot ---
         print("Создание точки доступа (Hotspot)...")
 
+        # Генерируем уникальное имя
+        unique_suffix = get_device_suffix()
+        ssid_name = f"RPI-Setup-{unique_suffix}"
+
+        print(f"🔥 Создаю точку доступа с именем: {ssid_name}")
+
         # Удаляем старый профиль Hotspot, если он есть
         subprocess.run(["sudo", "nmcli", "con", "delete", "Hotspot"], capture_output=True)
 
         # 1. Создаем базовое подключение
+        # Создаем новое подключение с уникальным именем
         subprocess.run([
             "sudo", "nmcli", "con", "add", "type", "wifi", "ifname", "wlan0", "con-name", "Hotspot",
-            "autoconnect", "yes", "ssid", "RPI-Setup"
+            "autoconnect", "yes", "ssid", ssid_name
         ], check=True)
 
         # 2. Настраиваем режим AP, IP и строгий WPA2-AES (RSN/CCMP)
