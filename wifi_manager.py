@@ -67,17 +67,17 @@ def get_wifi_networks():
                     })
         return networks
     except subprocess.CalledProcessError as e:
-        print(f"Ошибка при сканировании: {e}")
+        print(f"Scanning error: {e}")
         return []
 
 def ensure_hotspot_mode():
     """Проверяет наличие подключения и создает Hotspot, если сети нет."""
-    print("Проверка состояния Wi-Fi...")
+    print("Checking Wi-Fi status...")
     
     if IS_LOCAL_DEV:
-        print("[MOCK] Проверка активных подключений...")
-        print("[MOCK] Нет активного Wi-Fi подключения. Создание Hotspot 'RPI-Setup'...")
-        print("[MOCK] Hotspot активирован. IP адрес: 10.42.0.1")
+        print("[MOCK] Checking active connections...")
+        print("[MOCK] No active Wi-Fi connection. Creating Hotspot 'RPI-Setup'...")
+        print("[MOCK] Hotspot activated. IP address: 10.42.0.1")
         return
 
     try:
@@ -90,22 +90,22 @@ def ensure_hotspot_mode():
         
         # Ищем 802-11-wireless или wifi в выводе
         if "802-11-wireless:activated" in result.stdout or "wifi:activated" in result.stdout:
-            print("Обнаружено активное Wi-Fi подключение. Hotspot не нужен.")
+            print("Active Wi-Fi connection detected. Hotspot not needed.")
             return
 
-        print("Активное Wi-Fi подключение не найдено. Начинаем процедуру создания Hotspot...")
+        print("No active Wi-Fi connection found. Starting Hotspot creation procedure...")
 
         # --- 1. Полный сброс Radio (User Request: Full reset) ---
         # Выключаем и включаем радио для сброса состояния драйвера
-        print("♻️ Сброс драйвера Wi-Fi (Radio OFF/ON)...")
+        print("♻️ Resetting Wi-Fi driver (Radio OFF/ON)...")
         subprocess.run(["sudo", "nmcli", "radio", "wifi", "off"], check=True)
         time.sleep(2) 
         subprocess.run(["sudo", "nmcli", "radio", "wifi", "on"], check=True)
-        print("⏳ Ожидание инициализации Wi-Fi адаптера (4 сек)...")
+        print("⏳ Waiting for Wi-Fi adapter initialization (4 sec)...")
         time.sleep(4)
 
         # --- 2. Удаление «фантомов» (User Request: Clean wlan0) ---
-        print("🧹 Очистка интерфейса от фантомных подключений...")
+        print("🧹 Cleaning interface from phantom connections...")
         # После включения радио NM мог автоматом подцепить что-то. Проверяем и удаляем.
         try:
             res_active = subprocess.run(
@@ -122,19 +122,19 @@ def ensure_hotspot_mode():
                     
                     # Если висит что-то на wlan0 и это не наш целевой Hotspot (которого еще нет)
                     if device == "wlan0" and name != "Hotspot":
-                        print(f"🔪 Принудительное отключение фантома: {name} ({uuid})")
+                        print(f"🔪 Forcibly disconnecting phantom: {name} ({uuid})")
                         subprocess.run(["sudo", "nmcli", "con", "down", uuid], capture_output=True)
         except Exception as e:
-            print(f"⚠️ Ошибка при очистке фантомов (некритично): {e}")
+            print(f"⚠️ Error cleaning phantoms (non-critical): {e}")
 
         # --- 3. Создание Hotspot ---
-        print("Создание точки доступа (Hotspot)...")
+        print("Creating Access Point (Hotspot)...")
 
         # Генерируем уникальное имя
         unique_suffix = get_device_suffix()
         ssid_name = f"RPI-Setup-{unique_suffix}"
 
-        print(f"🔥 Создаю точку доступа с именем: {ssid_name}")
+        print(f"🔥 Creating access point with name: {ssid_name}")
 
         # Удаляем старый профиль Hotspot, если он есть
         subprocess.run(["sudo", "nmcli", "con", "delete", "Hotspot"], capture_output=True)
@@ -164,20 +164,20 @@ def ensure_hotspot_mode():
         # 3. Поднимаем интерфейс
         subprocess.run(["sudo", "nmcli", "con", "up", "Hotspot"], check=True)
         
-        print("✅ Hotspot 'RPI-Setup' (WPA2-AES) успешно создан и активирован.")
-        print("Подключитесь к сети 'RPI-Setup' и перейдите по адресу: http://10.42.0.1:5000")
+        print("✅ Hotspot 'RPI-Setup' (WPA2-AES) successfully created and activated.")
+        print("Connect to network 'RPI-Setup' and go to: http://10.42.0.1:5000")
 
     except subprocess.CalledProcessError as e:
-        print(f"❌ Ошибка при настройке Hotspot: {e}")
+        print(f"❌ Error configuring Hotspot: {e}")
     except Exception as e:
-        print(f"❌ Непредвиденная ошибка: {e}")
+        print(f"❌ Unexpected error: {e}")
 
 def run_nmcli_connect(ssid, password):
     """Фоновая функция для выполнения подключения."""
     time.sleep(2) # Задержка, чтобы Flask успел отправить ответ браузеру
     
     if IS_LOCAL_DEV:
-        print(f"[MOCK] Выполнение команды: sudo nmcli dev wifi connect '{ssid}' password '{password}'")
+        print(f"[MOCK] Executing command: sudo nmcli dev wifi connect '{ssid}' password '{password}'")
         return
 
     try:
@@ -189,21 +189,21 @@ def run_nmcli_connect(ssid, password):
             timeout=60 # Увеличим таймаут на всякий случай
         )
         if result.returncode == 0:
-            print(f"Успешное подключение к {ssid}")
+            print(f"Successfully connected to {ssid}")
             
             # Если подключение успешно, удаляем/отключаем Hotspot, чтобы переключиться в режим клиента
             try:
-                print("Удаление профиля Hotspot для перехода в режим клиента...")
+                print("Deleting Hotspot profile to switch to client mode...")
                 subprocess.run(["sudo", "nmcli", "con", "delete", "Hotspot"], capture_output=True)
             except Exception as e:
-                print(f"Ошибка при удалении Hotspot: {e}")
+                print(f"Error deleting Hotspot: {e}")
                 
         else:
-            print(f"Ошибка подключения к {ssid}: {result.stderr}")
+            print(f"Error connecting to {ssid}: {result.stderr}")
             # Можно добавить логику возврата к Hotspot, если подключение не удалось
             
     except Exception as e:
-        print(f"Исключение при попытке подключения: {e}")
+        print(f"Exception during connection attempt: {e}")
 
 def check_internet():
     """Проверяет доступность интернета (ping 8.8.8.8)."""
@@ -222,7 +222,7 @@ def check_internet():
     except subprocess.CalledProcessError:
         return False
     except Exception as e:
-        print(f"Ошибка проверки ping: {e}")
+        print(f"Ping check error: {e}")
         return False
 
 def internet_monitor_loop():
@@ -231,7 +231,7 @@ def internet_monitor_loop():
     1. Если есть интернет (мы подключились к Wi-Fi) -> УБИВАЕМ Hotspot (безопасность).
     2. Если интернета нет -> ПОДНИМАЕМ Hotspot (чтобы юзер мог настроить).
     """
-    print("Старт фонового мониторинга интернета (Режим: Wi-Fi Provisioning)...")
+    print("Starting background internet monitoring (Mode: Wi-Fi Provisioning)...")
     while True:
         time.sleep(10) # Проверяем каждые 10 секунд (можно реже, но для тестов лучше так)
         
@@ -250,13 +250,13 @@ def internet_monitor_loop():
                     capture_output=True, text=True
                 )
                 if "Hotspot" in res.stdout:
-                    print("✅ Интернет появился! Убиваю настроечную точку доступа (Hotspot)...")
+                    print("✅ Internet restored! Killing configuration access point (Hotspot)...")
                     subprocess.run(["sudo", "nmcli", "con", "delete", "Hotspot"], capture_output=True)
                 
                 continue # Всё хорошо, интернет есть, спим дальше
-
+            
             # 2. ЕСЛИ ИНТЕРНЕТА НЕТ
-            print("🔴 Нет выхода в интернет. Проверяю, поднят ли Hotspot...")
+            print("🔴 No internet access. Checking if Hotspot is up...")
             
             # Проверяем, есть ли активные соединения вообще (чтобы не дёргать зря)
             res = subprocess.run(
@@ -275,14 +275,14 @@ def internet_monitor_loop():
             for line in res.stdout.strip().split('\n'):
                 if "wifi" in line or "wireless" in line:
                     conn_name = line.split(':')[0]
-                    print(f"Отменяю попытки подключения к {conn_name} для запуска Hotspot...")
+                    print(f"Cancelling connection attempts to {conn_name} to start Hotspot...")
                     subprocess.run(["sudo", "nmcli", "con", "down", conn_name])
 
             # Запускаем Hotspot
             ensure_hotspot_mode()
 
         except Exception as e:
-            print(f"Ошибка в цикле мониторинга: {e}")
+            print(f"Error in monitor loop: {e}")
 
 def start_monitor_thread():
     thread = threading.Thread(target=internet_monitor_loop, daemon=True)
@@ -293,7 +293,7 @@ def start_monitor_thread():
 # HTML шаблон
 HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -315,7 +315,7 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <h1>Управление Wi-Fi (Raspberry Pi 5)</h1>
+    <h1>Wi-Fi Manager (Raspberry Pi 5)</h1>
     
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -331,9 +331,9 @@ HTML_TEMPLATE = """
         <thead>
             <tr>
                 <th>SSID</th>
-                <th>Сигнал (%)</th>
-                <th>Безопасность</th>
-                <th>Действие</th>
+                <th>Signal (%)</th>
+                <th>Security</th>
+                <th>Action</th>
             </tr>
         </thead>
         <tbody>
@@ -343,7 +343,7 @@ HTML_TEMPLATE = """
                 <td>{{ net.signal }}</td>
                 <td>{{ net.security }}</td>
                 <td>
-                    <button class="btn" onclick="selectNetwork('{{ net.ssid }}')">Выбрать</button>
+                    <button class="btn" onclick="selectNetwork('{{ net.ssid }}')">Select</button>
                 </td>
             </tr>
             {% endfor %}
@@ -351,15 +351,15 @@ HTML_TEMPLATE = """
     </table>
 
     <div class="form-container">
-        <h2>Подключение к сети</h2>
+        <h2>Connect to Network</h2>
         <form action="/connect" method="post">
             <label for="ssid_input">SSID:</label>
-            <input type="text" name="ssid" id="ssid_input" required placeholder="Выберите сеть из списка или введите SSID">
+            <input type="text" name="ssid" id="ssid_input" required placeholder="Select a network or enter SSID">
             
-            <label for="password_input">Пароль:</label>
-            <input type="password" name="password" id="password_input" required placeholder="Введите пароль">
+            <label for="password_input">Password:</label>
+            <input type="password" name="password" id="password_input" required placeholder="Enter password">
             
-            <button type="submit" class="btn" style="width: 100%; font-weight: bold;">Подключиться</button>
+            <button type="submit" class="btn" style="width: 100%; font-weight: bold;">Connect</button>
         </form>
     </div>
 
@@ -384,7 +384,7 @@ def connect():
     password = request.form.get('password')
     
     if not ssid:
-        flash("SSID не может быть пустым", "error")
+        flash("SSID cannot be empty", "error")
         return redirect(url_for('index'))
     
     # Сразу проверяем пароль в nmcli мы не можем без запуска, 
@@ -397,15 +397,15 @@ def connect():
     thread.daemon = True
     thread.start()
     
-    flash(f"Подключение к {ssid}... Устройство может временно уйти в офлайн.", "info")
+    flash(f"Connecting to {ssid}... Device may go offline temporarily.", "info")
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
     host = '0.0.0.0'
     port = 5000
-    print(f"Запуск Wi-Fi менеджера на http://{host}:{port}")
+    print(f"Starting Wi-Fi Manager at http://{host}:{port}")
     if IS_LOCAL_DEV:
-        print("ВНИМАНИЕ: nmcli не найден. Работает режим локальной разработки (MOCK).")
+        print("WARNING: nmcli not found. Running in local development mode (MOCK).")
 
     # 4. Проверяем режим при запуске
     ensure_hotspot_mode()
