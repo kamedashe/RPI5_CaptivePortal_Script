@@ -88,21 +88,23 @@ def ensure_hotspot_mode():
             text=True
         )
         
-        # Ищем 802-11-wireless или wifi в выводе
-        if "802-11-wireless:activated" in result.stdout or "wifi:activated" in result.stdout:
-            print("Active Wi-Fi connection detected. Hotspot not needed.")
+        # Look for 802-11-wireless or wifi in the output
+        # Also check for 'activating' to avoid killing a connection currently being established
+        if "802-11-wireless:activated" in result.stdout or "wifi:activated" in result.stdout or \
+           "802-11-wireless:activating" in result.stdout or "wifi:activating" in result.stdout:
+            print("Active or activating Wi-Fi connection detected. Hotspot not needed.")
             return
 
         print("No active Wi-Fi connection found. Starting Hotspot creation procedure...")
 
-        # --- 1. Полный сброс Radio (User Request: Full reset) ---
+        # --- 1. Полный сброс Radio (User Request: Full reset) - REMOVED due to "death loop"
         # Выключаем и включаем радио для сброса состояния драйвера
-        print("♻️ Resetting Wi-Fi driver (Radio OFF/ON)...")
-        subprocess.run(["sudo", "nmcli", "radio", "wifi", "off"], check=True)
-        time.sleep(2) 
-        subprocess.run(["sudo", "nmcli", "radio", "wifi", "on"], check=True)
-        print("⏳ Waiting for Wi-Fi adapter initialization (4 sec)...")
-        time.sleep(4)
+        # print("♻️ Resetting Wi-Fi driver (Radio OFF/ON)...")
+        # subprocess.run(["sudo", "nmcli", "radio", "wifi", "off"], check=True)
+        # time.sleep(2) 
+        # subprocess.run(["sudo", "nmcli", "radio", "wifi", "on"], check=True)
+        # print("⏳ Waiting for Wi-Fi adapter initialization (4 sec)...")
+        # time.sleep(4)
 
         # --- 2. Удаление «фантомов» (User Request: Clean wlan0) ---
         print("🧹 Cleaning interface from phantom connections...")
@@ -258,27 +260,39 @@ def internet_monitor_loop():
             # 2. ЕСЛИ ИНТЕРНЕТА НЕТ
             print("🔴 No internet access. Checking if Hotspot is up...")
             
-            # Проверяем, есть ли активные соединения вообще (чтобы не дёргать зря)
+            # Check if there are any active connections at all (to avoid unnecessary toggling)
+            # Added STATE to check for 'activating'
             res = subprocess.run(
-                 ["nmcli", "-t", "-f", "NAME,TYPE", "con", "show", "--active"], 
+                 ["nmcli", "-t", "-f", "NAME,TYPE,STATE", "con", "show", "--active"], 
                  capture_output=True, text=True
             )
             
-            # Если Hotspot уже работает — ничего не делаем, ждем пользователя
+            # If Hotspot is already working — do nothing, wait for user
             if "Hotspot" in res.stdout:
                 continue
 
-            # Если Hotspot нет и интернета нет — значит мы отвалились.
-            # Надо поднимать точку спасения.
-            
-            # Сначала убиваем попытки подключения к другим сетям, чтобы освободить адаптер
-            for line in res.stdout.strip().split('\n'):
-                if "wifi" in line or "wireless" in line:
-                    conn_name = line.split(':')[0]
-                    print(f"Cancelling connection attempts to {conn_name} to start Hotspot...")
-                    subprocess.run(["sudo", "nmcli", "con", "down", conn_name])
+            # Check if any wifi connection is 'activating' - if so, give it time
+            if "activating" in res.stdout:
+                print("⏳ Connection in progress (activating)... waiting.")
+                continue
 
-            # Запускаем Hotspot
+            # If no Hotspot and no internet — means we dropped off.
+            # Need to bring up the rescue point.
+            
+            # First kill attempts to connect to other networks to free up adapter
+            for line in res.stdout.strip().split('\n'):
+                # Line format: NAME:TYPE:STATE
+                parts = line.split(':')
+                if len(parts) >= 2:
+                    conn_name = parts[0]
+                    conn_type = parts[1]
+                    # conn_state = parts[2] if len(parts) > 2 else ""
+
+                    if "wifi" in conn_type or "wireless" in conn_type:
+                        print(f"Cancelling connection attempts to {conn_name} to start Hotspot...")
+                        subprocess.run(["sudo", "nmcli", "con", "down", conn_name])
+
+            # Start Hotspot
             ensure_hotspot_mode()
 
         except Exception as e:
